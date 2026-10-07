@@ -53,11 +53,10 @@ app.use('/api/', rateLimit({
   legacyHeaders: false
 }));
 
-// Create uploads directory if not exists (local dev fallback)
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir);
-}
+// NOTE: do NOT mkdirSync at module load. On Vercel /var/task is read-only,
+// so eager directory creation crashes the entire function at cold start.
+// The local uploads/ directory is created lazily inside saveUpload() only
+// when an actual file needs to be written (local dev).
 
 // Multer: memory storage (serverless-safe) + image-only validation + 5MB cap
 const upload = multer({
@@ -90,8 +89,11 @@ const saveUpload = async (file) => {
     const blob = await blobPut(`uploads/${safeName}`, file.buffer, { access: 'public' });
     return blob.url;
   }
-  if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
-  fs.writeFileSync(path.join(uploadsDir, safeName), file.buffer);
+  // Local dev only - on Vercel this branch is never reached because
+  // BLOB_READ_WRITE_TOKEN is required to persist uploads.
+  const dir = path.join(__dirname, 'uploads');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, safeName), file.buffer);
   return '/uploads/' + safeName;
 };
 
