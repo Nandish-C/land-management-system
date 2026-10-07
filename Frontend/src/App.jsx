@@ -1,7 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
 
-const API_URL = 'http://localhost:5000/api';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
+// All API calls send the httpOnly session cookie set by the backend
+const apiFetch = (url, options = {}) => fetch(url, { ...options, credentials: 'include' });
+
+// Production stores absolute image URLs (Vercel Blob); dev uses /uploads paths
+const getImageUrl = (imagePath) => {
+  if (!imagePath) return '';
+  if (imagePath.startsWith('http')) return imagePath;
+  return `${API_URL.replace(/\/api$/, '')}${imagePath}`;
+};
 
 // --- Land Details Popup Component ---
 const LandDetailsPopup = ({ land, isOpen, onClose, payments = [] }) => {
@@ -164,7 +174,7 @@ const LandDetailsPopup = ({ land, isOpen, onClose, payments = [] }) => {
           <div style={{ marginBottom: '20px' }}>
             {land.image ? (
               <img 
-                src={`http://localhost:5000${land.image}`} 
+                src={getImageUrl(land.image)} 
                 alt="Land" 
                 style={{ 
                   width: '100%', 
@@ -520,7 +530,7 @@ const MapPickerModal = ({ isOpen, onClose, initialLat, initialLng, initialAddres
             setLongitude(pos.lng);
             
             // Reverse geocode using backend proxy
-            fetch(`${API_URL}/geocode/reverse?lat=${pos.lat}&lon=${pos.lng}`)
+            apiFetch(`${API_URL}/geocode/reverse?lat=${pos.lat}&lon=${pos.lng}`)
             .then(res => res.json())
             .then(data => {
               let addressStr = '';
@@ -573,7 +583,7 @@ const MapPickerModal = ({ isOpen, onClose, initialLat, initialLng, initialAddres
               setLongitude(pos.lng);
               
               // Reverse geocode using backend proxy
-              fetch(`${API_URL}/geocode/reverse?lat=${pos.lat}&lon=${pos.lng}`)
+              apiFetch(`${API_URL}/geocode/reverse?lat=${pos.lat}&lon=${pos.lng}`)
               .then(res => res.json())
               .then(data => {
                 let addressStr = '';
@@ -610,7 +620,7 @@ const MapPickerModal = ({ isOpen, onClose, initialLat, initialLng, initialAddres
           }
           
           // Reverse geocode using backend proxy on click
-          fetch(`${API_URL}/geocode/reverse?lat=${lat}&lon=${lng}`)
+          apiFetch(`${API_URL}/geocode/reverse?lat=${lat}&lon=${lng}`)
           .then(res => res.json())
           .then(data => {
             let addressStr = '';
@@ -684,7 +694,7 @@ const MapPickerModal = ({ isOpen, onClose, initialLat, initialLng, initialAddres
     setSearching(true);
     try {
       // Use backend proxy instead of calling Nominatim directly
-      const response = await fetch(`${API_URL}/geocode/search?q=${encodeURIComponent(query)}`);
+      const response = await apiFetch(`${API_URL}/geocode/search?q=${encodeURIComponent(query)}`);
       
       if (response.ok) {
         const allResults = await response.json();
@@ -783,7 +793,7 @@ const MapPickerModal = ({ isOpen, onClose, initialLat, initialLng, initialAddres
           
           // Reverse geocode using backend proxy
           try {
-            const res = await fetch(`${API_URL}/geocode/reverse?lat=${pos.lat}&lon=${pos.lng}`);
+            const res = await apiFetch(`${API_URL}/geocode/reverse?lat=${pos.lat}&lon=${pos.lng}`);
             const geodata = await res.json();
             
             // Build address string from response
@@ -844,7 +854,7 @@ const MapPickerModal = ({ isOpen, onClose, initialLat, initialLng, initialAddres
         
         try {
           // Use backend proxy to avoid CORS issues
-          const response = await fetch(`${API_URL}/geocode/reverse?lat=${lat}&lon=${lon}`, {
+          const response = await apiFetch(`${API_URL}/geocode/reverse?lat=${lat}&lon=${lon}`, {
             headers: {
               'Content-Type': 'application/json'
             }
@@ -1353,7 +1363,7 @@ const AuthPage = ({ onLogin, showToast }) => {
     }
     
     try {
-      const response = await fetch(`${API_URL}/auth/login`, {
+      const response = await apiFetch(`${API_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password, role })
@@ -1726,14 +1736,14 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
   const fetchData = async () => {
     try {
       const [landsRes, employeesRes, customersRes, adminsRes, paymentsRes, statsRes, summaryRes, logsRes] = await Promise.all([
-        fetch(`${API_URL}/lands`),
-        fetch(`${API_URL}/employees`),
-        fetch(`${API_URL}/customers`),
-        fetch(`${API_URL}/admins`),
-        fetch(`${API_URL}/payments`),
-        fetch(`${API_URL}/stats/admin`),
-        fetch(`${API_URL}/reports/payments`),
-        fetch(`${API_URL}/auditlogs`)
+        apiFetch(`${API_URL}/lands`),
+        apiFetch(`${API_URL}/employees`),
+        apiFetch(`${API_URL}/customers`),
+        apiFetch(`${API_URL}/admins`),
+        apiFetch(`${API_URL}/payments`),
+        apiFetch(`${API_URL}/stats/admin`),
+        apiFetch(`${API_URL}/reports/payments`),
+        apiFetch(`${API_URL}/auditlogs`)
       ]);
 
       const landsData = await landsRes.json();
@@ -1805,7 +1815,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
         formData.append('image', landImage);
       }
 
-      const response = await fetch(`${API_URL}/lands`, {
+      const response = await apiFetch(`${API_URL}/lands`, {
         method: 'POST',
         body: formData
       });
@@ -1881,7 +1891,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
         }
         formData.append('image', landImage);
 
-        const response = await fetch(`${API_URL}/lands/${editingLand._id}`, {
+        const response = await apiFetch(`${API_URL}/lands/${editingLand._id}`, {
           method: 'PUT',
           body: formData
         });
@@ -1897,7 +1907,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
         }
       } else {
         // No new image, use JSON
-        const response = await fetch(`${API_URL}/lands/${editingLand._id}`, {
+        const response = await apiFetch(`${API_URL}/lands/${editingLand._id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1925,7 +1935,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
   const handleDeleteLand = async (landId) => {
     if (!window.confirm('Are you sure you want to delete this land?')) return;
     try {
-      const response = await fetch(`${API_URL}/lands/${landId}`, {
+      const response = await apiFetch(`${API_URL}/lands/${landId}`, {
         method: 'DELETE'
       });
 
@@ -1976,7 +1986,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
     }
     
     try {
-      const response = await fetch(`${API_URL}/employees`, {
+      const response = await apiFetch(`${API_URL}/employees`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newEmployee)
@@ -2012,7 +2022,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
   const handleUpdateEmployee = async (e) => {
     e.preventDefault();
     try {
-      const response = await fetch(`${API_URL}/employees/${editingEmployee._id}`, {
+      const response = await apiFetch(`${API_URL}/employees/${editingEmployee._id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newEmployee)
@@ -2034,7 +2044,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
   const handleDeleteEmployee = async (employeeId) => {
     if (!window.confirm('Are you sure you want to delete this employee?')) return;
     try {
-      const response = await fetch(`${API_URL}/employees/${employeeId}`, {
+      const response = await apiFetch(`${API_URL}/employees/${employeeId}`, {
         method: 'DELETE'
       });
 
@@ -2085,7 +2095,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
     }
     
     try {
-      const response = await fetch(`${API_URL}/customers`, {
+      const response = await apiFetch(`${API_URL}/customers`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newCustomer)
@@ -2121,7 +2131,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
   const handleUpdateCustomer = async (e) => {
     e.preventDefault();
     try {
-      const response = await fetch(`${API_URL}/customers/${editingCustomer._id}`, {
+      const response = await apiFetch(`${API_URL}/customers/${editingCustomer._id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newCustomer)
@@ -2143,7 +2153,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
   const handleDeleteCustomer = async (customerId) => {
     if (!window.confirm('Are you sure you want to delete this customer?')) return;
     try {
-      const response = await fetch(`${API_URL}/customers/${customerId}`, {
+      const response = await apiFetch(`${API_URL}/customers/${customerId}`, {
         method: 'DELETE'
       });
 
@@ -2194,7 +2204,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
     }
     
     try {
-      const response = await fetch(`${API_URL}/admins`, {
+      const response = await apiFetch(`${API_URL}/admins`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newAdmin)
@@ -2220,7 +2230,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
   const handleDeleteAdmin = async (adminId) => {
     if (!window.confirm('Are you sure you want to delete this admin?')) return;
     try {
-      const response = await fetch(`${API_URL}/admins/${adminId}`, {
+      const response = await apiFetch(`${API_URL}/admins/${adminId}`, {
         method: 'DELETE'
       });
 
@@ -2241,7 +2251,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
   const handleDeletePayment = async (paymentId) => {
     if (!window.confirm('Are you sure you want to delete this payment?')) return;
     try {
-      const response = await fetch(`${API_URL}/payments/${paymentId}`, {
+      const response = await apiFetch(`${API_URL}/payments/${paymentId}`, {
         method: 'DELETE'
       });
 
@@ -2250,7 +2260,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
         fetchData();
         
         // Log to audit
-        await fetch(`${API_URL}/auditlogs`, {
+        await apiFetch(`${API_URL}/auditlogs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2272,13 +2282,13 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
   const handleRefundPayment = async (paymentId) => {
     if (!window.confirm('Are you sure you want to refund this payment?')) return;
     try {
-      const response = await fetch(`${API_URL}/payments/${paymentId}/refund`, {
+      const response = await apiFetch(`${API_URL}/payments/${paymentId}/refund`, {
         method: 'POST'
       });
 
       if (response.ok) {
         // Log to audit FIRST
-        await fetch(`${API_URL}/auditlogs`, {
+        await apiFetch(`${API_URL}/auditlogs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2314,7 +2324,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
       return;
     }
     try {
-      const response = await fetch(`${API_URL}/payments/${refundData.paymentId}/refund`, {
+      const response = await apiFetch(`${API_URL}/payments/${refundData.paymentId}/refund`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2326,7 +2336,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
 
       if (response.ok) {
         // Log to audit FIRST
-        await fetch(`${API_URL}/auditlogs`, {
+        await apiFetch(`${API_URL}/auditlogs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2372,7 +2382,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
   const handleUpdatePayment = async (e) => {
     e.preventDefault();
     try {
-      const response = await fetch(`${API_URL}/payments/${editingPayment._id}`, {
+      const response = await apiFetch(`${API_URL}/payments/${editingPayment._id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newPayment)
@@ -2401,7 +2411,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
       const land = lands.find(l => l._id === newPayment.landId);
       if (land) {
         try {
-          const response = await fetch(`${API_URL}/payments`);
+          const response = await apiFetch(`${API_URL}/payments`);
           const allPayments = await response.json();
           const landPayments = allPayments.filter(p => {
             const paymentLandId = p.landId?._id || p.landId;
@@ -2428,7 +2438,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
     }
     
     try {
-      const response = await fetch(`${API_URL}/payments`, {
+      const response = await apiFetch(`${API_URL}/payments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2447,7 +2457,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
         
         // Log to audit FIRST
         const land = lands.find(l => l._id === newPayment.landId);
-        await fetch(`${API_URL}/auditlogs`, {
+        await apiFetch(`${API_URL}/auditlogs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2478,7 +2488,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
   const handleAssignEmployee = async (landId, employeeId) => {
     const isUnassigning = !employeeId;
     try {
-      const response = await fetch(`${API_URL}/lands/${landId}`, {
+      const response = await apiFetch(`${API_URL}/lands/${landId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ assignedEmployee: employeeId || null })
@@ -2583,7 +2593,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
                   {editingLand && editingLand?.image && !landImage && (
                     <div style={{ marginBottom: '10px', padding: '10px', background: '#f0fdf4', borderRadius: '8px', border: '1px solid #22c55e' }}>
                       <div style={{ fontSize: '12px', color: '#166534', marginBottom: '5px' }}>Current Image:</div>
-                      <img src={`http://localhost:5000${editingLand.image}`} alt="Current Land" style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '8px' }} />
+                      <img src={getImageUrl(editingLand.image)} alt="Current Land" style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '8px' }} />
                     </div>
                   )}
                   <input type="file" accept="image/*" onChange={(e) => setLandImage(e.target.files[0])} style={{ width: '100%' }} />
@@ -2674,7 +2684,7 @@ const AdminDashboard = ({ user, onLogout, currentPage, showToast }) => {
                     <tr key={land._id}>
                       <td>
                         {land.image && land.image.length > 0 ? (
-                          <img src={`http://localhost:5000${land.image}`} alt="Land" style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '5px' }} onError={(e) => {e.target.style.display = 'none'}} />
+                          <img src={getImageUrl(land.image)} alt="Land" style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '5px' }} onError={(e) => {e.target.style.display = 'none'}} />
                         ) : (
                           <div style={{ width: '50px', height: '50px', background: '#ddd', borderRadius: '5px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>🏠</div>
                         )}
@@ -3468,7 +3478,7 @@ const CustomerDashboard = ({ user, onLogout, currentPage, showToast }) => {
 
   const fetchRazorpayKey = async () => {
     try {
-      const res = await fetch(`${API_URL}/payments/key`);
+      const res = await apiFetch(`${API_URL}/payments/key`);
       const data = await res.json();
       // Accept both demo mode and real configured mode
       if (data.configured) {
@@ -3485,10 +3495,10 @@ const CustomerDashboard = ({ user, onLogout, currentPage, showToast }) => {
   const fetchData = async () => {
     try {
       const [landsRes, paymentsRes, statsRes, logsRes] = await Promise.all([
-        fetch(`${API_URL}/lands/customer/${user._id}`),
-        fetch(`${API_URL}/payments/customer/${user._id}`),
-        fetch(`${API_URL}/stats/customer/${user._id}`),
-        fetch(`${API_URL}/auditlogs`)
+        apiFetch(`${API_URL}/lands/customer/${user._id}`),
+        apiFetch(`${API_URL}/payments/customer/${user._id}`),
+        apiFetch(`${API_URL}/stats/customer/${user._id}`),
+        apiFetch(`${API_URL}/auditlogs`)
       ]);
 
       const landsData = await landsRes.json();
@@ -3522,7 +3532,7 @@ const CustomerDashboard = ({ user, onLogout, currentPage, showToast }) => {
 
     try {
       // Create Razorpay order
-      const orderRes = await fetch(`${API_URL}/payments/create-order`, {
+      const orderRes = await apiFetch(`${API_URL}/payments/create-order`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -3553,7 +3563,7 @@ const CustomerDashboard = ({ user, onLogout, currentPage, showToast }) => {
       // Check if demo mode
       if (orderData.demo) {
         // Demo mode - directly create payment without actual payment
-        const verifyRes = await fetch(`${API_URL}/payments/verify`, {
+        const verifyRes = await apiFetch(`${API_URL}/payments/verify`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -3575,7 +3585,7 @@ const CustomerDashboard = ({ user, onLogout, currentPage, showToast }) => {
           showToast('Payment successful! (Demo Mode)', 'success');
           
           // Log to audit FIRST
-          await fetch(`${API_URL}/auditlogs`, {
+          await apiFetch(`${API_URL}/auditlogs`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -3612,7 +3622,7 @@ const CustomerDashboard = ({ user, onLogout, currentPage, showToast }) => {
         handler: async (response) => {
           // Verify payment
           try {
-            const verifyRes = await fetch(`${API_URL}/payments/verify`, {
+            const verifyRes = await apiFetch(`${API_URL}/payments/verify`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -3633,7 +3643,7 @@ const CustomerDashboard = ({ user, onLogout, currentPage, showToast }) => {
               showToast('Payment successful!', 'success');
               
               // Log to audit FIRST
-              await fetch(`${API_URL}/auditlogs`, {
+              await apiFetch(`${API_URL}/auditlogs`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -3712,7 +3722,7 @@ const CustomerDashboard = ({ user, onLogout, currentPage, showToast }) => {
       const newBalance = Math.max(0, totalAmount - (totalPaid + amount));
 
       // Create payment directly
-      const response = await fetch(`${API_URL}/payments`, {
+      const response = await apiFetch(`${API_URL}/payments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -3733,7 +3743,7 @@ const CustomerDashboard = ({ user, onLogout, currentPage, showToast }) => {
         showToast('UPI Payment submitted successfully! Your payment is under review.', 'success');
         
         // Log to audit FIRST
-        await fetch(`${API_URL}/auditlogs`, {
+        await apiFetch(`${API_URL}/auditlogs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -4274,10 +4284,10 @@ const EmployeeDashboard = ({ user, onLogout, currentPage, showToast }) => {
   const fetchData = async () => {
     try {
       const [landsRes, paymentsRes, statsRes, logsRes] = await Promise.all([
-        fetch(`${API_URL}/lands/employee/${user._id}`),
-        fetch(`${API_URL}/payments/employee/${user._id}`),
-        fetch(`${API_URL}/stats/employee/${user._id}`),
-        fetch(`${API_URL}/auditlogs`)
+        apiFetch(`${API_URL}/lands/employee/${user._id}`),
+        apiFetch(`${API_URL}/payments/employee/${user._id}`),
+        apiFetch(`${API_URL}/stats/employee/${user._id}`),
+        apiFetch(`${API_URL}/auditlogs`)
       ]);
 
       const landsData = await landsRes.json();
@@ -4306,7 +4316,7 @@ const EmployeeDashboard = ({ user, onLogout, currentPage, showToast }) => {
     if (paymentType === 'full') {
       // For full payment, fetch all payments for this land from backend
       try {
-        const response = await fetch(`${API_URL}/payments`);
+        const response = await apiFetch(`${API_URL}/payments`);
         const allPayments = await response.json();
         const landPayments = allPayments.filter(p => {
           const paymentLandId = p.landId?._id || p.landId;
@@ -4331,7 +4341,7 @@ const EmployeeDashboard = ({ user, onLogout, currentPage, showToast }) => {
     }
 
     try {
-      const response = await fetch(`${API_URL}/payments`, {
+      const response = await apiFetch(`${API_URL}/payments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -4357,7 +4367,7 @@ const EmployeeDashboard = ({ user, onLogout, currentPage, showToast }) => {
         
         // Log to audit FIRST
         const land = lands.find(l => l._id === selectedLand);
-        await fetch(`${API_URL}/auditlogs`, {
+        await apiFetch(`${API_URL}/auditlogs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -4883,6 +4893,8 @@ function App() {
   };
 
   const handleLogout = () => {
+    // Clear the server-side session cookie as well
+    apiFetch(`${API_URL}/auth/logout`, { method: 'POST' }).catch(() => {});
     setCurrentUser(null);
     setCurrentRole(null);
     // Clear localStorage

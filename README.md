@@ -102,7 +102,7 @@ Create `backend/.env` (see [Configuration](#configuration)).
 
 - MongoDB connects automatically via `MONGODB_URI`
 - On first run, a default **Admin** account is created automatically
-- **Reset database** (clears all data, recreates admin): `GET /api/reset`
+- **Reset database** (admin only, disabled in production): `GET /api/reset`
 - **Fix duplicate IDs**: `GET /api/fix-ids`
 
 ### Database Structure
@@ -201,7 +201,7 @@ Admin account auto-created on first run:
 
 ### Audit & Utility
 - `GET /api/auditlogs` · `POST /api/auditlogs`
-- `GET /api/reset` — Reset DB & recreate admin
+- `GET /api/reset` — admin only, disabled in production
 - `GET /api/fix-ids` — Show current/next land & payment IDs
 - `/uploads/*` — Static uploaded images
 
@@ -233,18 +233,39 @@ land-management-system/
 └── README.md                       # This file
 ```
 
-## 🌿 Git & Deployment
+## 🌐 Deployment (Vercel)
 
+The project deploys as **two Vercel projects** from this repository:
+
+### 1. Backend API
+1. Import `Nandish-C/land-management-system` at [vercel.com/new](https://vercel.com/new)
+2. Set **Root Directory** to `backend` (Vercel auto-detects the Express app in `server.js`)
+3. Add Environment Variables (see `backend/.env.example`):
+   - `MONGODB_URI` — MongoDB Atlas connection string (required)
+   - `JWT_SECRET` — long random string (required)
+   - `CORS_ORIGINS` — your frontend URL, e.g. `https://land-management-system.vercel.app`
+   - `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` — production keys
+   - `DEMO_MODE=false`
+   - `BLOB_READ_WRITE_TOKEN` — optional; enables persistent image storage (Vercel Blob). Without it, uploaded images do not survive redeploys.
+4. Deploy. Your API is at `https://<backend-project>.vercel.app`
+
+### 2. Frontend
+1. Import the same repo again, set **Root Directory** to `Frontend` (Vercel auto-detects Vite)
+2. Add Environment Variable: `VITE_API_URL=https://<backend-project>.vercel.app/api`
+3. Deploy. SPA routing, security headers, and asset caching are configured in `Frontend/vercel.json`
+
+### Local development
 ```bash
-git init
-git add .
-git commit -m "Initial commit: Land Management System"
-git remote add origin <your-repo-url>
-git push -u origin main
+git clone https://github.com/Nandish-C/land-management-system.git
+cd land-management-system
+
+cd backend && cp .env.example .env && npm install && npm start   # http://localhost:5000
+cd ../Frontend && cp .env.example .env && npm install && npm run dev   # http://localhost:5173
 ```
 
 - `backend/.gitignore` excludes `node_modules/`, `uploads/`, and `.env` — never commit secrets or uploaded files
-- Deploy backend (e.g., Render/Railway) with env vars set; deploy frontend build (`dist/`) on any static host
+- `GET /api/reset` is admin-only and disabled in production
+- All API routes except `/api/auth/login`, `/api/auth/logout`, and `/api/health` require the session cookie issued at login
 
 ## 🔧 Troubleshooting
 

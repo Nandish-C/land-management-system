@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const multer = require('multer');
@@ -6,36 +6,98 @@ const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const Razorpay = require('razorpay');
+const jwt = require('jsonwebtoken');
+const cookieParser = require('cookie-parser');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const compression = require('compression');
 require('dotenv').config();
 
 const app = express();
+const isProd = process.env.NODE_ENV === 'production';
 
-// Middleware
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// ---- Security middleware ----
+app.use(helmet());
 
-// Create uploads directory if not exists
+const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true
+}));
+
+app.use(compression());
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+app.use(cookieParser());
+
+// Rate limiting
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+app.use('/api/auth/login', authLimiter);
+
+app.use('/api/', rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isProd ? 300 : 2000,
+  standardHeaders: true,
+  legacyHeaders: false
+}));
+
+// Create uploads directory if not exists (local dev fallback)
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
 }
 
-// Multer configuration for image upload
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads/');
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + '-' + file.originalname);
+// Multer: memory storage (serverless-safe) + image-only validation + 5MB cap
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (!allowed.includes(file.mimetype)) {
+      return cb(new Error('Only JPEG, PNG, WebP or GIF images are allowed'), false);
+    }
+    cb(null, true);
   }
 });
 
-const upload = multer({ storage });
+// Vercel Blob gives uploads persistent, CDN-backed storage on Vercel.
+// Without a token (local dev), files fall back to the local uploads/ directory.
+let blobPut = null;
+try {
+  if (process.env.BLOB_READ_WRITE_TOKEN) {
+    blobPut = require('@vercel/blob').put;
+  }
+} catch (err) {
+  console.log('@vercel/blob not available, using local uploads directory');
+}
+
+const saveUpload = async (file) => {
+  if (!file) return '';
+  const safeName = `${Date.now()}-${String(file.originalname).replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+  if (blobPut) {
+    const blob = await blobPut(`uploads/${safeName}`, file.buffer, { access: 'public' });
+    return blob.url;
+  }
+  if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+  fs.writeFileSync(path.join(uploadsDir, safeName), file.buffer);
+  return '/uploads/' + safeName;
+};
 
 // Razorpay instance - initialize with available keys
-// Set DEMO_MODE = true to skip Razorpay and use mock payments
-const DEMO_MODE = true; // Set to false to use real Razorpay
+// Set DEMO_MODE=true (env) to skip Razorpay and use mock payments
+const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
 let razorpay = null;
 if (!DEMO_MODE) {
@@ -99,7 +161,7 @@ const isStrongPassword = (password) => {
 // MongoDB Connection
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/landmgmt';
 
-mongoose.connect(MONGODB_URI)
+mongoose.connect(MONGODB_URI, { maxPoolSize: 10, serverSelectionTimeoutMS: 10000 })
   .then(() => console.log('MongoDB Connected'))
   .catch(err => console.error('MongoDB Connection Error:', err));
 
@@ -115,7 +177,7 @@ const initializeData = async () => {
       name: 'Admin',
       email: 'admin@landmail.com',
       password: hashedPassword,
-      role: 'Admin'
+      role: 'admin'
     });
     
     console.log('Admin user created. Admin can add employees and customers from the dashboard.');
@@ -125,6 +187,19 @@ const initializeData = async () => {
 initializeData();
 
 // ============ AUTH ROUTES ============
+
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me-in-production';
+
+if (isProd && (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'dev-secret-change-me-in-production')) {
+  console.warn('WARNING: JWT_SECRET is not set - using insecure default. Set it in production.');
+}
+
+const cookieOptions = {
+  httpOnly: true,
+  secure: isProd,
+  sameSite: isProd ? 'none' : 'lax',
+  maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+};
 
 // Login
 app.post('/api/auth/login', async (req, res) => {
@@ -148,6 +223,10 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
     
+    // Issue session token in an httpOnly cookie (not readable from JS)
+    const token = jwt.sign({ id: user._id.toString(), role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+    res.cookie('token', token, cookieOptions);
+    
     res.json({
       _id: user._id,
       name: user.name,
@@ -158,6 +237,49 @@ app.post('/api/auth/login', async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 });
+
+// Logout - clears the session cookie
+app.post('/api/auth/logout', (req, res) => {
+  res.clearCookie('token', cookieOptions);
+  res.json({ message: 'Logged out' });
+});
+
+// Health check (public - used by uptime monitors)
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    demo: DEMO_MODE
+  });
+});
+
+// ============ AUTH MIDDLEWARE ============
+
+const requireAuth = (req, res, next) => {
+  const token = (req.cookies && req.cookies.token) || (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!token) {
+    return res.status(401).json({ message: 'Authentication required' });
+  }
+  try {
+    req.user = jwt.verify(token, JWT_SECRET);
+    next();
+  } catch (err) {
+    return res.status(401).json({ message: 'Invalid or expired session' });
+  }
+};
+
+const requireAdmin = (req, res, next) => {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({ message: 'Admin access required' });
+  }
+  next();
+};
+
+// Every remaining /api route requires authentication
+app.use('/api', requireAuth);
+
+// Admin-only routes
+app.use(['/api/admins', '/api/stats/admin', '/api/reports/payments', '/api/fix-ids'], requireAdmin);
 
 // ============ USER ROUTES ============
 
@@ -477,7 +599,7 @@ app.post('/api/lands', upload.single('image'), async (req, res) => {
       pricePerMonth: parseInt(pricePerMonth) || 0,
       installmentTotal: parseInt(installmentTotal) || 0,
       details,
-      image: req.file ? '/uploads/' + req.file.filename : '',
+      image: await saveUpload(req.file),
       assignedEmployee: assignedEmployee || null,
       status: 'sold',
       location: parsedLocation || { latitude: null, longitude: null, address: '' }
@@ -538,7 +660,7 @@ app.put('/api/lands/:id', upload.single('image'), async (req, res) => {
     
     // If a new image is uploaded, add it to update data
     if (req.file) {
-      updateData.image = '/uploads/' + req.file.filename;
+      updateData.image = await saveUpload(req.file);
     }
     
     const land = await Land.findByIdAndUpdate(
@@ -892,7 +1014,7 @@ const formatCoordsAsAddress = (lat, lon) => {
   const latDir = latNum >= 0 ? 'N' : 'S';
   const lonDir = lonNum >= 0 ? 'E' : 'W';
   return {
-    display_name: `${Math.abs(latNum).toFixed(4)}°${latDir}, ${Math.abs(lonNum).toFixed(4)}°${lonDir}`,
+    display_name: `${Math.abs(latNum).toFixed(4)}Â°${latDir}, ${Math.abs(lonNum).toFixed(4)}Â°${lonDir}`,
     address: { latitude: latNum, longitude: lonNum }
   };
 };
@@ -1207,7 +1329,7 @@ app.post('/api/payments/create-order', async (req, res) => {
     // Validate amount
     const amountInPaise = Math.round(amount * 100);
     if (amountInPaise < 100) {
-      return res.status(400).json({ message: 'Minimum amount should be ₹1' });
+      return res.status(400).json({ message: 'Minimum amount should be â‚¹1' });
     }
     
     // If Razorpay is not configured, use demo mode
@@ -1368,45 +1490,22 @@ app.get('/api/payments/key', async (req, res) => {
   } catch (error) {
     res.status(500).json({ message: 'Failed to get payment key' });
   }
-
-// Start server
-const PORT = process.env.PORT || 5000;
-
-// Reset database endpoint (call once to clear and recreate admin)
-app.get('/api/reset', async (req, res) => {
-  try {
-    await User.deleteMany({});
-    await Land.deleteMany({});
-    await Payment.deleteMany({});
-    
-    const hashedPassword = await bcrypt.hash('Admin123$', 10);
-    await User.create({
-      name: 'Admin',
-      email: 'admin@landmail.com',
-      password: hashedPassword,
-      role: 'admin'
-    });
-    
-    res.json({ message: 'Database reset. Admin created.' });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
 });
 
-// Fix duplicate IDs endpoint - finds max existing IDs
+// Fix duplicate IDs endpoint - finds max existing IDs (admin only)
 app.get('/api/fix-ids', async (req, res) => {
   try {
     const lastLand = await Land.findOne({}).sort({ landId: -1 });
-    const maxLandNum = lastLand && lastLand.landId 
-      ? parseInt(lastLand.landId.replace('LAND-', ''), 10) 
+    const maxLandNum = lastLand && lastLand.landId
+      ? parseInt(lastLand.landId.replace('LAND-', ''), 10)
       : 0;
-    
+
     const lastPayment = await Payment.findOne({}).sort({ paymentId: -1 });
-    const maxPaymentNum = lastPayment && lastPayment.paymentId 
-      ? parseInt(lastPayment.paymentId.replace('PAY-', ''), 10) 
+    const maxPaymentNum = lastPayment && lastPayment.paymentId
+      ? parseInt(lastPayment.paymentId.replace('PAY-', ''), 10)
       : 0;
-    
-    res.json({ 
+
+    res.json({
       message: 'Current max IDs retrieved',
       maxLandId: maxLandNum > 0 ? 'LAND-' + String(maxLandNum).padStart(4, '0') : 'None',
       maxPaymentId: maxPaymentNum > 0 ? 'PAY-' + String(maxPaymentNum).padStart(4, '0') : 'None',
@@ -1418,19 +1517,16 @@ app.get('/api/fix-ids', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-});  
-
-// Start server
-const PORT = process.env.PORT || 5000;
-
-// Reset database endpoint (call once to clear and recreate admin)
-app.get('/api/reset', async (req, res) => {
+// Reset database - admin only, disabled in production
+app.get('/api/reset', requireAdmin, async (req, res) => {
+  if (isProd) {
+    return res.status(403).json({ message: 'Database reset is disabled in production' });
+  }
   try {
     await User.deleteMany({});
     await Land.deleteMany({});
     await Payment.deleteMany({});
-    
+
     const hashedPassword = await bcrypt.hash('Admin123$', 10);
     await User.create({
       name: 'Admin',
@@ -1438,36 +1534,31 @@ app.get('/api/reset', async (req, res) => {
       password: hashedPassword,
       role: 'admin'
     });
-    
+
     res.json({ message: 'Database reset. Admin created.' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 });
 
-// Fix duplicate IDs endpoint - finds max existing IDs
-app.get('/api/fix-ids', async (req, res) => {
-  try {
-    const lastLand = await Land.findOne({}).sort({ landId: -1 });
-    const maxLandNum = lastLand && lastLand.landId 
-      ? parseInt(lastLand.landId.replace('LAND-', ''), 10) 
-      : 0;
-    
-    const lastPayment = await Payment.findOne({}).sort({ paymentId: -1 });
-    const maxPaymentNum = lastPayment && lastPayment.paymentId 
-      ? parseInt(lastPayment.paymentId.replace('PAY-', ''), 10) 
-      : 0;
-    
-    res.json({ 
-      message: 'Current max IDs retrieved',
-      maxLandId: maxLandNum > 0 ? 'LAND-' + String(maxLandNum).padStart(4, '0') : 'None',
-      maxPaymentId: maxPaymentNum > 0 ? 'PAY-' + String(maxPaymentNum).padStart(4, '0') : 'None',
-      nextLandId: 'LAND-' + String(maxLandNum + 1).padStart(4, '0'),
-      nextPaymentId: 'PAY-' + String(maxPaymentNum + 1).padStart(4, '0')
-    });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
+// ============ ERROR HANDLING ============
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ message: 'Route not found' });
 });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// Global error handler - never leak internal details to clients
+app.use((err, req, res, next) => {
+  console.error(err);
+  const status = err.status || 500;
+  res.status(status).json({ message: status >= 500 ? 'Internal server error' : (err.message || 'Request failed') });
+});
+
+// Start server only when run directly (not on Vercel serverless)
+if (require.main === module) {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+}
+
+module.exports = app;
